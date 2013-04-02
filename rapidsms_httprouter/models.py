@@ -1,9 +1,12 @@
 import datetime
+import django
 
-from django.db import models, connections
+from django.db import models, connections, transaction
 from django.db.models.query import QuerySet
 
 from rapidsms.models import Contact, Connection
+
+mass_text_sent = django.dispatch.Signal(providing_args=["messages", "status"])
 
 DIRECTION_CHOICES = (
     ('I', "Incoming"),
@@ -24,6 +27,14 @@ STATUS_CHOICES = (
     ('E', "Errored")
 )
 
+#Once we start mass_texting, batching messages becomes absolutely necessary
+class MessageBatch(models.Model):
+    status = models.CharField(max_length=1, choices=STATUS_CHOICES)
+    name = models.CharField(max_length=15,null=True,blank=True)
+    
+    def __unicode__(self):
+        return '%s %s --> %s' % (self.pk, self.name, self.status) 
+    
 class Message(models.Model):
     connection = models.ForeignKey(Connection, related_name='messages')
     text       = models.TextField()
@@ -37,6 +48,9 @@ class Message(models.Model):
     sent       = models.DateTimeField(null=True, blank=True)
     delivered  = models.DateTimeField(null=True, blank=True)
 
+    batch = models.ForeignKey(MessageBatch, related_name='messages', null=True) #a message may belong to a batch
+    priority = models.IntegerField(default=10, db_index=True) #messages in a batch may be prioritized
+    
     in_response_to = models.ForeignKey('self', related_name='responses', null=True, blank=True)
 
     def __unicode__(self):
@@ -63,6 +77,27 @@ class Message(models.Model):
 
         # send this message off in celery
         send_message_task.delay(self.pk)
+        
+    #Some times its necessary to Mass insert messages
+    @classmethod
+    @transaction.commit_on_success
+    def mass_text(cls, text, connections, status='P', batch_status='Q'):
+        
+        #imported here to make the dependency on celery soft
+        from tasks import queue_messages_task
+        msg_batch = MessageBatch.objects.create(status=batch_status)
+        entries = []
+        
+        for connection in connections:
+            entries += [Message(text=text, date=datetime.datetime.now(), direction='O', status=status, batch=msg_batch, connection=connection, priority=10)]
+        Message.objects.bulk_create(entries)
+
+        toret = Message.objects.order_by('-pk')[0:connections.count()]
+        
+        #respond to these messages by queuing them up in celery
+#        queue_messages_task.delay(toret)
+        mass_text_sent.send(sender=msg_batch, messages=toret, status=status)
+        return toret
 
 class DeliveryError(models.Model):
     """

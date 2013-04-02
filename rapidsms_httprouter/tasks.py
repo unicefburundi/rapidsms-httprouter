@@ -181,4 +181,24 @@ def resend_errored_messages_task():  #pragma: no cover
 
         print "-- resent %d pending messages -- " % count
 
-
+@task(track_started=True)
+def queue_messages_task():
+    """
+    Queue batched messages
+    TODO: Ensure that batches that were queued before are taken care of first
+    """
+    from .models import Message, MessageBatch
+    from rapidsms.messages.outgoing import OutgoingMessage
+    batches = MessageBatch.objects.filter(status='Q')
+    for batch in batches:
+        try:
+            messages = Message.objects.filter(batch=batch, status='P', direction='O')[0:settings.CHUNK_SIZE]
+            # create a RapidSMS outgoing message
+            for outgoing in messages:
+                msg = OutgoingMessage(outgoing.connection, outgoing.text.replace('%','%%'))
+                msg.db_message = outgoing
+                if msg:
+                    outgoing.status = 'Q'
+                    outgoing.save()
+        except IndexError:
+            pass
