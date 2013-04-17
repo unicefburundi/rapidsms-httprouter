@@ -51,7 +51,6 @@ def build_send_url(params, **kwargs):
 
         # none?  blow the hell up
         else:
-            self.error("No router url mapping found for backend '%s', check your settings.ROUTER_URL setting" % backend_name)
             raise Exception("No router url mapping found for backend '%s', check your settings.ROUTER_URL setting" % backend_name)
 
     # return our built up url with all our variables substituted in
@@ -202,3 +201,109 @@ def queue_messages_task():
                     outgoing.save()
         except IndexError:
             pass
+
+def build_send_url_legacy(params, **kwargs):
+        """
+        Constructs an appropriate send url for the given message.
+        """
+
+        # make sure our parameters are URL encoded
+        params.update(kwargs)
+        for k, v in params.items():
+            try:
+                params[k] = quote_plus(str(v))
+            except UnicodeEncodeError:
+                params[k] = quote_plus(str(v.encode('UTF-8')))
+
+        # is this actually a dict?  if so, we want to look up the appropriate backend
+        router_url = params.getattr('router_url', None)
+        backend = params.getattr('backend', None)
+        if type(router_url) is dict:
+            router_dict = router_url
+            backend_name = backend
+
+            # is there an entry for this backend?
+            if backend_name in router_dict:
+                router_url = router_dict[backend_name]
+
+            # if not, look for a default backend 
+            elif 'default' in router_dict:
+                router_url = router_dict['default']
+
+            # none?  blow the hell up
+            else:
+                raise Exception("No router url mapping found for backend '%s', check your settings.ROUTER_URL setting" % backend_name)
+
+        # return our built up url with all our variables substituted in
+        full_url = router_url % params
+
+        return full_url
+    
+def send_backend_chunk(router_url, pks, backend_name):
+        msgs = Message.objects.filter(pk__in=pks).exclude(connection__identity__iregex="[a-z]")
+        try:
+            params = {
+            'router_url': router_url,
+             'backend': backend_name, 
+             'recipient': ' '.join(msgs.values_list('connection__identity', flat=True)), 
+             'text': msgs[0].text, 
+            }
+            url = build_send_url(params)
+            status_code = fetch_url(url)
+
+            # kannel likes to send 202 responses, really any
+            # 2xx value means things went okay
+            if int(status_code / 100) == 2:
+                msgs.update(status='S')
+            else:
+                msgs.update(status='Q')
+
+        except Exception as e:
+            msgs.update(status='Q')
+            
+def send_all(router_url, to_send):
+        pks = []
+        if len(to_send):
+            backend_name = to_send[0].connection.backend.name
+            for msg in to_send:
+                if backend_name != msg.connection.backend.name:
+                    # send all of the same backend
+                    send_backend_chunk(router_url, pks, backend_name)
+                    # reset the loop status variables to build the next chunk of messages with the same backend
+                    backend_name = msg.connection.backend.name
+                    pks = [msg.pk]
+                else:
+                    pks.append(msg.pk)
+            send_backend_chunk(router_url, pks, backend_name)
+
+def send_individual(router_url, backend):
+    to_process = Message.objects.filter(direction='O', connection__backend__name=backend, status__in=['Q']).order_by('priority', 'status')
+    if len(to_process):
+        send_all(router_url, [to_process[0]])
+                    
+@task(track_started=True)
+def send_kannel_messages_task():
+    """
+    Send MT messages to Kannel for onward forwarding to 
+    """
+    from .models import Message, MessageBatch
+    backends = settings.KANNEL_BACKENDS
+    CHUNK_SIZE = getattr(settings, 'MESSAGE_CHUNK_SIZE', 400)
+    while (True):
+        for backend, router_url in backends.items():
+            try:
+                to_process = MessageBatch.objects.filter(status='Q')
+                if to_process.count():
+                    batch = to_process[0]
+                    to_process = batch.messages.filter(direction='O', connection__backend__name=backend, status__in=['Q']).order_by('priority', 'status')[:CHUNK_SIZE]
+                    if to_process.count():
+                        send_all(router_url, to_process)
+                    elif batch.messages.filter(status__in=['S', 'C']).count() == batch.messages.count():
+                        batch.status = 'S'
+                        batch.save()
+                    else:
+                        send_individual(router_url, backend)
+                else:
+                    send_individual(router_url, backend)
+            except Exception, exc:
+                pass
