@@ -94,10 +94,13 @@ class HttpRouter(object, LoggerMixin):
         Handles an incoming message.
         """
         # create our db message for logging
+        #TODO: implement storage of a message for many connections
         db_message = self.add_message(backend, sender, text, 'I', 'R')
 
         # and our rapidsms transient message for processing
-        msg = IncomingMessage(db_message.connection, text, db_message.date)
+        # MessageBase now requires connections instead of connection
+        # msg = IncomingMessage(db_message.connection, text, db_message.date)
+        msg = IncomingMessage([db_message.connection], text, db_message.date)
         
         # add an extra property to IncomingMessage, so httprouter-aware
         # apps can make use of it during the handling phase
@@ -300,8 +303,9 @@ class HttpRouter(object, LoggerMixin):
             self.add_app(app_name)
 
         # start all our apps
-        for app in self.apps:
-            app.start()
+        # this was removed from AppBase (RapidSMS v0.1) and causes problems if called on applications that don't implement it
+#        for app in self.apps:
+#            app.start()
 
         # the list of messages which need to be sent, we load this from the DB
         # upon first starting up
