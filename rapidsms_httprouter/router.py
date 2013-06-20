@@ -205,7 +205,12 @@ class HttpRouter(object, LoggerMixin):
         message which triggered it.
         """
         # add it to our outgoing queue
-        db_message = self.add_outgoing(msg.connection, msg.text, source, status='P')
+        # not compatible with latest rapidsms, new RapidSMS returns a dict instead of a message object
+        # {'connections': [connection objects], 'text': 'message text', 'in_response_to': IncomingMessage message object}
+        # db_message = self.add_outgoing(msg.connection, msg.text, source, status='P')
+        connections = msg['connections']
+        for connection in connections:
+            db_message = self.add_outgoing(connection, msg['text'], source, status='P' )
         return db_message
 
     def process_outgoing_phases(self, outgoing):
