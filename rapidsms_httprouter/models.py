@@ -51,6 +51,7 @@ class Message(models.Model):
     batch = models.ForeignKey(MessageBatch, related_name='messages', null=True) #a message may belong to a batch
     priority = models.IntegerField(default=10, db_index=True) #messages in a batch may be prioritized
     
+    application = models.CharField(max_length=100, null=True) #which application has handled the message
     in_response_to = models.ForeignKey('self', related_name='responses', null=True, blank=True)
 
     def __unicode__(self):
