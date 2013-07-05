@@ -167,8 +167,9 @@ def resend_errored_messages_task():  #pragma: no cover
         print "-- resent %d errored messages --" % count
 
         # and all queued messages that are older than 2 minutes
-        two_minutes_ago = datetime.now() - timedelta(minutes=2)
-        pending = Message.objects.filter(direction='O', status__in=('Q'), updated__lte=two_minutes_ago)
+#        two_minutes_ago = datetime.now() - timedelta(minutes=2)
+#        pending = Message.objects.filter(direction='O', status__in=('Q'), updated__lte=two_minutes_ago)
+        pending = Message.objects.filter(direction='O', status__in=('Q')) #why wait for two minutes???
 
         # send each
         count = 0
