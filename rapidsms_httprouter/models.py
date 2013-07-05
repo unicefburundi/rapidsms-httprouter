@@ -82,11 +82,11 @@ class Message(models.Model):
     #Some times its necessary to Mass insert messages
     @classmethod
     @transaction.commit_on_success
-    def mass_text(cls, text, connections, status='P', batch_status='Q'):
+    def mass_text(cls, text, connections, status='P', batch_status='Q', batch_name=None):
         
         #imported here to make the dependency on celery soft
         from tasks import queue_messages_task
-        msg_batch = MessageBatch.objects.create(status=batch_status)
+        msg_batch = MessageBatch.objects.create(status=batch_status, name=batch_name)
         entries = []
         
         for connection in connections:
