@@ -267,12 +267,12 @@ def send_backend_chunk(router_url, pks, backend_name):
             print "HTTPError! Error code: %s", err.code
     except urllib2.URLError, err:
         print "-- URLError: %s", err.reason
-    else:
-        print "-- Unknown Error, %s messages are left queued -- " % msgs.count()
+#    else:
+#        print "-- Unknown Error, %s messages will be left queued -- " % msgs.count()
 #        msgs.update(status='Q')
     finally:   
         if res:
-            status_code = res.get_code()
+            status_code = res.getcode()
         else:
             try:
                 status_code = err.code
