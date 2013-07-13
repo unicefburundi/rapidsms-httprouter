@@ -242,6 +242,7 @@ def build_send_url_legacy(params, **kwargs):
     
 def send_backend_chunk(router_url, pks, backend_name):
         msgs = Message.objects.filter(pk__in=pks).exclude(connection__identity__iregex="[a-z]")
+        print "-- %s messages to be send out -- " % msgs.count()
         try:
             params = {
             'router_url': router_url,
@@ -250,22 +251,29 @@ def send_backend_chunk(router_url, pks, backend_name):
              'text': msgs[0].text, 
             }
             url = build_send_url_legacy(params)
+            print "-- calling url -- " % url
             status_code = fetch_url(url)
+            
+            print "-- kannel responded with %s status code -- " % status_code
 
             # kannel likes to send 202 responses, really any
             # 2xx value means things went okay
             if int(status_code / 100) == 2:
                 msgs.update(status='S')
+                print "-- kannel accepted all the %s messages, we mark them as sent -- " % msgs.count()
             else:
                 msgs.update(status='Q')
+                print "-- kannel didn't accept thse %s messages, we leave them queued -- " % msgs.count()
 
         except Exception as e:
+            print "-- there was Error, %s messages are left queued -- " % msgs.count()
             msgs.update(status='Q')
             
 def send_all(router_url, to_send):
         pks = []
         if len(to_send):
             backend_name = to_send[0].connection.backend.name
+            print "-- initializing sending messages for %s backend -- " % backend_name 
             for msg in to_send:
                 if backend_name != msg.connection.backend.name:
                     # send all of the same backend
@@ -275,10 +283,12 @@ def send_all(router_url, to_send):
                     pks = [msg.pk]
                 else:
                     pks.append(msg.pk)
+            print "-- sending out %s messages as a chunk through %s backend -- " % (pks.count(), backend_name)
             send_backend_chunk(router_url, pks, backend_name)
 
 def send_individual(router_url, backend):
     to_process = Message.objects.filter(direction='O', connection__backend__name=backend, status__in=['Q']).order_by('priority', 'status')
+    print "-- processing %s individually -- " % to_process.count()
     if len(to_process):
         send_all(router_url, [to_process[0]])
                     
@@ -288,24 +298,32 @@ def send_kannel_messages_task():
     Send MT messages to Kannel for onward forwarding to 
     """
 #    import ipdb;ipdb.set_trace()
+    print "-- starting the passing of messages to kannel --" 
     from .models import Message, MessageBatch
     backends = settings.KANNEL_BACKENDS
     CHUNK_SIZE = getattr(settings, 'MESSAGE_CHUNK_SIZE', 400)
     while (True):
         for backend, router_url in backends.items():
+            print "-- processing messages for %s backend -- " % backend 
             try:
                 to_process = MessageBatch.objects.filter(status='Q')
                 if to_process.count():
+                    print "-- %s batches found -- " % to_process.count() 
                     batch = to_process[0]
+                    print "-- processing batch %s -- " % batch 
                     to_process = batch.messages.filter(direction='O', connection__backend__name=backend, status__in=['Q']).order_by('priority', 'status')[:CHUNK_SIZE]
                     if to_process.count():
+                        print "-- batch %s contains %s messages to process -- " % (batch, to_process.count()) 
                         send_all(router_url, to_process)
                     elif batch.messages.filter(status__in=['S', 'C']).count() == batch.messages.count():
+                        print "-- batch %s has no more messages to processing, clossing it out -- " % batch 
                         batch.status = 'S'
                         batch.save()
                     else:
+                        print "-- sending individual message -- "  
                         send_individual(router_url, backend)
                 else:
+                    print "-- sending individual message -- " 
                     send_individual(router_url, backend)
             except Exception, exc:
                 pass
