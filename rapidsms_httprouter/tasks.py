@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from django.conf import settings
 from .models import Message, DeliveryError
 from .router import HttpRouter
-from urllib import quote_plus
+from urllib import quote_plus, unquote
 from urllib2 import urlopen
 import traceback
 import time
@@ -204,41 +204,43 @@ def queue_messages_task():
             pass
 
 def build_send_url_legacy(params, **kwargs):
-        """
-        Constructs an appropriate send url for the given message.
-        """
+    """
+    Constructs an appropriate send url for the given message.
+    """
 
-        # make sure our parameters are URL encoded
-        params.update(kwargs)
-        for k, v in params.items():
-            try:
-                params[k] = quote_plus(str(v))
-            except UnicodeEncodeError:
-                params[k] = quote_plus(str(v.encode('UTF-8')))
+    # make sure our parameters are URL encoded
+    params.update(kwargs)
+    for k, v in params.items():
+        try:
+            params[k] = quote_plus(str(v))
+        except UnicodeEncodeError:
+            params[k] = quote_plus(str(v.encode('UTF-8')))
 
-        # is this actually a dict?  if so, we want to look up the appropriate backend
-        router_url = params.getattr('router_url', None)
-        backend = params.getattr('backend', None)
-        if type(router_url) is dict:
-            router_dict = router_url
-            backend_name = backend
+    # is this actually a dict?  if so, we want to look up the appropriate backend
+    router_url = params.get('router_url', None)
+    backend = params.get('backend', None)
+    if type(router_url) is dict:
+        router_dict = router_url
+        backend_name = backend
 
-            # is there an entry for this backend?
-            if backend_name in router_dict:
-                router_url = router_dict[backend_name]
+        # is there an entry for this backend?
+        if backend_name in router_dict:
+            router_url = router_dict[backend_name]
 
-            # if not, look for a default backend 
-            elif 'default' in router_dict:
-                router_url = router_dict['default']
+        # if not, look for a default backend 
+        elif 'default' in router_dict:
+            router_url = router_dict['default']
 
-            # none?  blow the hell up
-            else:
-                raise Exception("No router url mapping found for backend '%s', check your settings.ROUTER_URL setting" % backend_name)
+        # none?  blow the hell up
+        else:
+            raise Exception("No router url mapping found for backend '%s', check your settings.ROUTER_URL setting" % backend_name)
 
-        # return our built up url with all our variables substituted in
-        full_url = router_url % params
+    # return our built up url with all our variables substituted in
+    # decode the url again
+    router_url = unquote(router_url).decode('utf8')
+    full_url = router_url % params
 
-        return full_url
+    return full_url
     
 def send_backend_chunk(router_url, pks, backend_name):
         msgs = Message.objects.filter(pk__in=pks).exclude(connection__identity__iregex="[a-z]")
@@ -251,19 +253,38 @@ def send_backend_chunk(router_url, pks, backend_name):
              'text': msgs[0].text, 
             }
             url = build_send_url_legacy(params)
-            print "-- calling url -- " % url
-            status_code = fetch_url(url)
-            
+            print "-- calling url: %s -- " % url
+            import urllib2
+            res = None 
+            try:
+                res = urllib2.urlopen(url, timeout=15)
+            except urllib2.HTTPError, err:
+                if err.code == 404:
+                    print " -- Not found! -- Kannel might be down"
+                elif err.code == 403:
+                    print "-- Access denied! -- Connection to Kannel Refused"
+                else:
+                    print "Something wrong happened! Error code", err.code
+            except urllib2.URLError, err:
+                print "Some other error happened:", err.reason
+            if res:
+                status_code = res.get_code()
+            else:
+                try:
+                    status_code = err.code
+                except AttributeError:
+                    status_code = err.reason
+    
             print "-- kannel responded with %s status code -- " % status_code
 
             # kannel likes to send 202 responses, really any
             # 2xx value means things went okay
-            if int(status_code / 100) == 2:
+            if not res == None and int(status_code / 100) == 2:
                 msgs.update(status='S')
                 print "-- kannel accepted all the %s messages, we mark them as sent -- " % msgs.count()
             else:
                 msgs.update(status='Q')
-                print "-- kannel didn't accept thse %s messages, we leave them queued -- " % msgs.count()
+                print "-- kannel didn't accept these %s messages, we leave them queued -- " % msgs.count()
 
         except Exception as e:
             print "-- there was Error, %s messages are left queued -- " % msgs.count()
@@ -283,7 +304,7 @@ def send_all(router_url, to_send):
                     pks = [msg.pk]
                 else:
                     pks.append(msg.pk)
-            print "-- sending out %s messages as a chunk through %s backend -- " % (pks.count(), backend_name)
+            print "-- sending out %s messages as a chunk through %s backend -- " % (len(pks), backend_name)
             send_backend_chunk(router_url, pks, backend_name)
 
 def send_individual(router_url, backend):
@@ -302,28 +323,28 @@ def send_kannel_messages_task():
     from .models import Message, MessageBatch
     backends = settings.KANNEL_BACKENDS
     CHUNK_SIZE = getattr(settings, 'MESSAGE_CHUNK_SIZE', 400)
-    while (True):
-        for backend, router_url in backends.items():
-            print "-- processing messages for %s backend -- " % backend 
-            try:
-                to_process = MessageBatch.objects.filter(status='Q')
+#    while (True): #Removed since this is now run as a celery task
+    for backend, router_url in backends.items():
+        print "-- processing messages for %s backend -- " % backend 
+        try:
+            to_process = MessageBatch.objects.filter(status='Q')
+            if to_process.count():
+                print "-- %s batches found -- " % to_process.count() 
+                batch = to_process[0]
+                print "-- processing batch %s -- " % batch 
+                to_process = batch.messages.filter(direction='O', connection__backend__name=backend, status__in=['Q']).order_by('priority', 'status')[:CHUNK_SIZE]
                 if to_process.count():
-                    print "-- %s batches found -- " % to_process.count() 
-                    batch = to_process[0]
-                    print "-- processing batch %s -- " % batch 
-                    to_process = batch.messages.filter(direction='O', connection__backend__name=backend, status__in=['Q']).order_by('priority', 'status')[:CHUNK_SIZE]
-                    if to_process.count():
-                        print "-- batch %s contains %s messages to process -- " % (batch, to_process.count()) 
-                        send_all(router_url, to_process)
-                    elif batch.messages.filter(status__in=['S', 'C']).count() == batch.messages.count():
-                        print "-- batch %s has no more messages to processing, clossing it out -- " % batch 
-                        batch.status = 'S'
-                        batch.save()
-                    else:
-                        print "-- sending individual message -- "  
-                        send_individual(router_url, backend)
+                    print "-- batch %s contains %s messages to process -- " % (batch, to_process.count()) 
+                    send_all(router_url, to_process)
+                elif batch.messages.filter(status__in=['S', 'C']).count() == batch.messages.count():
+                    print "-- batch %s has no more messages to processing, clossing it out -- " % batch 
+                    batch.status = 'S'
+                    batch.save()
                 else:
-                    print "-- sending individual message -- " 
+                    print "-- sending individual message -- "  
                     send_individual(router_url, backend)
-            except Exception, exc:
-                pass
+            else:
+                print "-- sending individual message -- " 
+                send_individual(router_url, backend)
+        except Exception, exc:
+            pass

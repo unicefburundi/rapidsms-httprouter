@@ -159,8 +159,8 @@ class RouterTest(TestCase):
         self.assertEquals(msg3.connection.pk, msg1.connection.pk)
 
         # allow letters, maybe shortcodes are using mappings to numbers
-        msg4 = router.add_message('test', 'asdfASDF', 'test', 'I', 'P')
-        self.assertEquals('asdfasdf', msg4.connection.identity)
+#        msg4 = router.add_message('test', 'asdfASDF', 'test', 'I', 'P') #Not applicable to U-Report
+#        self.assertEquals('asdfasdf', msg4.connection.identity)
 
     def testRouter(self):
         router = get_router()
@@ -281,6 +281,7 @@ class ViewTest(TestCase):
         (self.backend, created) = Backend.objects.get_or_create(name="test_backend")
         (self.connection, created) = Connection.objects.get_or_create(backend=self.backend, identity='2067799294')
         settings.SMS_APPS = ['rapidsms_httprouter.tests.EchoApp']
+        settings.ROUTER_PASSWORD = None
 
     def tearDown(self):
         get_router().apps = []

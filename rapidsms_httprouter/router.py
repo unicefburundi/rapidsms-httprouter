@@ -183,26 +183,50 @@ class HttpRouter(object):
         """
         Adds a message to our outgoing queue, this is a non-blocking action
         """
-        db_message = Message.objects.create(connection=connection,
+        #New version of Rapid Supports sending to multiple connections
+        if not isinstance(connection, basestring) and isinstance(connection, list):
+            for c in connection:
+                db_message = Message.objects.create(connection=c,
                                             text=text,
                                             direction='O',
                                             status=status,
                                             in_response_to=source)
-        logger.info("SMS[%d] OUT (%s) : %s" % (db_message.id, str(connection), text))
-
-        # process our outgoing phases
-        self.process_outgoing_phases(db_message)
-
-        # if it wasn't cancelled
-        if db_message.status != 'C':
-            # queue it
-            db_message.status = 'Q'
-            db_message.save()
-
-        # if we have a router URL, send the message off
-        if getattr(settings, 'ROUTER_URL', None):
-            db_message.send()
-
+                logger.info("SMS[%d] OUT (%s) : %s" % (db_message.id, str(c), text))
+    
+                # process our outgoing phases
+                self.process_outgoing_phases(db_message)
+        
+                # if it wasn't cancelled
+                if db_message.status != 'C':
+                    # queue it
+                    db_message.status = 'Q'
+                    db_message.save()
+        
+                # if we have a router URL, send the message off
+                if getattr(settings, 'ROUTER_URL', None):
+                    db_message.send()
+        else:
+            
+            db_message = Message.objects.create(connection=connection,
+                                                text=text,
+                                                direction='O',
+                                                status=status,
+                                                in_response_to=source)
+            logger.info("SMS[%d] OUT (%s) : %s" % (db_message.id, str(connection), text))
+    
+            # process our outgoing phases
+            self.process_outgoing_phases(db_message)
+    
+            # if it wasn't cancelled
+            if db_message.status != 'C':
+                # queue it
+                db_message.status = 'Q'
+                db_message.save()
+    
+            # if we have a router URL, send the message off
+            if getattr(settings, 'ROUTER_URL', None):
+                db_message.send()
+    
         return db_message
                 
     def handle_outgoing(self, msg, source=None):
@@ -214,9 +238,12 @@ class HttpRouter(object):
         # not compatible with latest rapidsms, new RapidSMS returns a dict instead of a message object
         # {'connections': [connection objects], 'text': 'message text', 'in_response_to': IncomingMessage message object}
 #        db_message = self.add_outgoing(msg.connection, msg.text, source, status='P')
-        connections = msg['connections']
-        for connection in connections:
-            db_message = self.add_outgoing(connection, msg['text'], source, status='P' )
+        try:
+            connections = msg['connections']
+            db_message = self.add_outgoing(connections, msg['text'], source, status='P')
+        except TypeError:
+            connections = [msg.connections]
+            db_message = self.add_outgoing(connections, msg.text, source, status='P')
         return db_message
 
     def process_outgoing_phases(self, outgoing):
@@ -227,7 +254,12 @@ class HttpRouter(object):
         called with the message.  In that case this method will also return False
         """
         # create a RapidSMS outgoing message
-        msg = OutgoingMessage(outgoing.connection, outgoing.text.replace('%','%%'))
+        try:
+            outgoing.connection[0]
+            connections = [outgoing.connection]
+        except TypeError:
+            connections = outgoing.connection
+        msg = OutgoingMessage(connections, outgoing.text.replace('%','%%'))
         msg.db_message = outgoing
         
         send_msg = True
