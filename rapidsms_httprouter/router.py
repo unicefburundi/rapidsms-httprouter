@@ -5,7 +5,7 @@ from rapidsms.models import Backend, Connection
 from rapidsms.apps.base import AppBase
 from rapidsms.messages.incoming import IncomingMessage
 from rapidsms.messages.outgoing import OutgoingMessage
-from rapidsms.log.mixin import LoggerMixin
+#from rapidsms.log.mixin import LoggerMixin
 from threading import Lock, Thread
 
 from urllib import quote_plus
@@ -14,8 +14,11 @@ import time
 import re
 import datetime
 import traceback
+import logging
 
-class HttpRouter(object, LoggerMixin):
+logger = logging.getLogger(__name__)
+
+class HttpRouter(object):
     """
     This is a simplified version of the normal SMS router in that it has no threading.  Instead
     it is expected that the handle_incoming and handle_outcoming calls are made in the HTTP
@@ -106,17 +109,19 @@ class HttpRouter(object, LoggerMixin):
         # apps can make use of it during the handling phase
         msg.db_message = db_message
         
-        self.info("SMS[%d] IN (%s) : %s" % (db_message.id, msg.connection, msg.text))
+        logger.info("SMS[%d] IN (%s) : %s" % (db_message.id, msg.connection, msg.text))
         try:
             for phase in self.incoming_phases:
-                self.debug("In %s phase" % phase)
+                logger.debug("In %s phase" % phase)
                 if phase == "default":
                     if msg.handled:
-                        self.debug("Skipping phase")
+#                        self.debug("Skipping phase")
+                        logger.debug("Skipping phase")
                         break
 
                 for app in self.apps:
-                    self.debug("In %s app" % app)
+#                    self.debug("In %s app" % app)
+                    logger.debug("In %s app" % app)
                     handled = False
 
                     try:
@@ -132,7 +137,8 @@ class HttpRouter(object, LoggerMixin):
                     # to abort ALL further processing of this message
                     if phase == "filter":
                         if handled is True:
-                            self.warning("Message filtered")
+#                            self.warning("Message filtered")
+                            logger.warning("Message filtered")
                             raise(StopIteration)
 
                     # during the _handle_ phase, apps can return True
@@ -140,7 +146,7 @@ class HttpRouter(object, LoggerMixin):
                     # further apps from receiving the message
                     elif phase == "handle":
                         if handled is True:
-                            self.debug("Short-circuited")
+                            logger.debug("Short-circuited")
                             # mark the message handled to avoid the 
                             # default phase firing unnecessarily
                             msg.handled = True
@@ -150,7 +156,7 @@ class HttpRouter(object, LoggerMixin):
                         # allow default phase of apps to short circuit
                         # for prioritized contextual responses.   
                         if handled is True:
-                            self.debug("Short-circuited default")
+                            logger.debug("Short-circuited default")
                             break
                         
         except StopIteration:
@@ -182,7 +188,7 @@ class HttpRouter(object, LoggerMixin):
                                             direction='O',
                                             status=status,
                                             in_response_to=source)
-        self.info("SMS[%d] OUT (%s) : %s" % (db_message.id, str(connection), text))
+        logger.info("SMS[%d] OUT (%s) : %s" % (db_message.id, str(connection), text))
 
         # process our outgoing phases
         self.process_outgoing_phases(db_message)
@@ -226,13 +232,13 @@ class HttpRouter(object, LoggerMixin):
         
         send_msg = True
         for phase in self.outgoing_phases:
-            self.debug("Out %s phase" % phase)
+            logger.debug("Out %s phase" % phase)
 
             # call outgoing phases in the opposite order of the incoming
             # phases, so the first app called with an  incoming message
             # is the last app called with an outgoing message
             for app in reversed(self.apps):
-                self.debug("Out %s app" % app)
+                logger.debug("Out %s app" % app)
 
                 try:
                     func = getattr(app, phase)
@@ -251,7 +257,7 @@ class HttpRouter(object, LoggerMixin):
                     outgoing.status = 'C'
                     outgoing.save()
 
-                    self.warning("Message cancelled")
+                    logger.warning("Message cancelled")
                     send_msg = False
                     break
 

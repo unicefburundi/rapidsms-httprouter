@@ -249,7 +249,7 @@ def send_backend_chunk(router_url, pks, backend_name):
              'recipient': ' '.join(msgs.values_list('connection__identity', flat=True)), 
              'text': msgs[0].text, 
             }
-            url = build_send_url(params)
+            url = build_send_url_legacy(params)
             status_code = fetch_url(url)
 
             # kannel likes to send 202 responses, really any
@@ -287,6 +287,7 @@ def send_kannel_messages_task():
     """
     Send MT messages to Kannel for onward forwarding to 
     """
+#    import ipdb;ipdb.set_trace()
     from .models import Message, MessageBatch
     backends = settings.KANNEL_BACKENDS
     CHUNK_SIZE = getattr(settings, 'MESSAGE_CHUNK_SIZE', 400)
