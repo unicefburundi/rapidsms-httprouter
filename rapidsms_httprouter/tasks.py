@@ -6,6 +6,7 @@ from .models import Message, DeliveryError
 from .router import HttpRouter
 from urllib import quote_plus, unquote
 from urllib2 import urlopen
+import urllib2
 import traceback
 import time
 import re
@@ -243,52 +244,51 @@ def build_send_url_legacy(params, **kwargs):
     return full_url
     
 def send_backend_chunk(router_url, pks, backend_name):
-        msgs = Message.objects.filter(pk__in=pks).exclude(connection__identity__iregex="[a-z]")
-        print "-- %s messages to be send out -- " % msgs.count()
+    msgs = Message.objects.filter(pk__in=pks).exclude(connection__identity__iregex="[a-z]")
+    print "-- %s messages to be send out -- " % msgs.count()
+    #        try:
+    params = {
+    'router_url': router_url,
+     'backend': backend_name, 
+     'recipient': ' '.join(msgs.values_list('connection__identity', flat=True)), 
+     'text': msgs[0].text, 
+    }
+    url = build_send_url_legacy(params)
+    print "-- calling url: %s -- " % url
+    res = None 
+    try:
+        res = urllib2.urlopen(url, timeout=15)
+    except urllib2.HTTPError, err:
+        if err.code == 404:
+            print " -- Not found! -- Kannel might be down"
+        elif err.code == 403:
+            print "-- Access denied! -- Connection to Kannel Refused"
+        else:
+            print "Something wrong happened! Error code", err.code
+    except urllib2.URLError, err:
+        print "Some other error happened:", err.reason
+    if res:
+        status_code = res.get_code()
+    else:
         try:
-            params = {
-            'router_url': router_url,
-             'backend': backend_name, 
-             'recipient': ' '.join(msgs.values_list('connection__identity', flat=True)), 
-             'text': msgs[0].text, 
-            }
-            url = build_send_url_legacy(params)
-            print "-- calling url: %s -- " % url
-            import urllib2
-            res = None 
-            try:
-                res = urllib2.urlopen(url, timeout=15)
-            except urllib2.HTTPError, err:
-                if err.code == 404:
-                    print " -- Not found! -- Kannel might be down"
-                elif err.code == 403:
-                    print "-- Access denied! -- Connection to Kannel Refused"
-                else:
-                    print "Something wrong happened! Error code", err.code
-            except urllib2.URLError, err:
-                print "Some other error happened:", err.reason
-            if res:
-                status_code = res.get_code()
-            else:
-                try:
-                    status_code = err.code
-                except AttributeError:
-                    status_code = err.reason
+            status_code = err.code
+        except AttributeError:
+            status_code = err.reason
     
-            print "-- kannel responded with %s status code -- " % status_code
+    print "-- kannel responded with %s status code -- " % status_code
+    
+    # kannel likes to send 202 responses, really any
+    # 2xx value means things went okay
+    if not res == None and int(status_code / 100) == 2:
+        msgs.update(status='S')
+        print "-- kannel accepted all the %s messages, we mark them as sent -- " % msgs.count()
+    else:
+        msgs.update(status='Q')
+        print "-- kannel didn't accept these %s messages, we leave them queued -- " % msgs.count()
 
-            # kannel likes to send 202 responses, really any
-            # 2xx value means things went okay
-            if not res == None and int(status_code / 100) == 2:
-                msgs.update(status='S')
-                print "-- kannel accepted all the %s messages, we mark them as sent -- " % msgs.count()
-            else:
-                msgs.update(status='Q')
-                print "-- kannel didn't accept these %s messages, we leave them queued -- " % msgs.count()
-
-        except Exception as e:
-            print "-- there was Error, %s messages are left queued -- " % msgs.count()
-            msgs.update(status='Q')
+#        except Exception as e:
+#            print "-- there was Error, %s messages are left queued -- " % msgs.count()
+#            msgs.update(status='Q')
             
 def send_all(router_url, to_send):
         pks = []
