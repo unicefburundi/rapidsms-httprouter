@@ -168,9 +168,9 @@ def resend_errored_messages_task():  #pragma: no cover
         print "-- resent %d errored messages --" % count
 
         # and all queued messages that are older than 2 minutes
-#        two_minutes_ago = datetime.now() - timedelta(minutes=2)
-#        pending = Message.objects.filter(direction='O', status__in=('Q'), updated__lte=two_minutes_ago)
-        pending = Message.objects.filter(direction='O', status__in=('Q')) #why wait for two minutes???
+        two_minutes_ago = datetime.now() - timedelta(minutes=2)
+        pending = Message.objects.filter(direction='O', status__in=('Q'), updated__lte=two_minutes_ago)
+#        pending = Message.objects.filter(direction='O', status__in=('Q')) #why wait for two minutes???
 
         # send each
         count = 0
@@ -265,11 +265,10 @@ def send_backend_chunk(router_url, pks, backend_name):
             print "-- Access denied (403)! -- Connection to Kannel Refused"
         else:
             print "HTTPError! Error code: %s", err.code
+        msgs.update(status='E')
     except urllib2.URLError, err:
         print "-- URLError: %s", err.reason
-#    else:
-#        print "-- Unknown Error, %s messages will be left queued -- " % msgs.count()
-#        msgs.update(status='Q')
+        msgs.update(status='E')
     finally:   
         if res:
             status_code = res.getcode()
@@ -277,18 +276,17 @@ def send_backend_chunk(router_url, pks, backend_name):
             try:
                 status_code = err.code
             except AttributeError:
-                status_code = err.reason
-        
-        print "-- kannel responded with %s status code -- " % status_code
-        
+                status_code = err.reason       
+        print "-- kannel responded with %s status code -- " % status_code     
         # kannel likes to send 202 responses, really any
         # 2xx value means things went okay
         if not res == None and int(status_code / 100) == 2:
             msgs.update(status='S')
             print "-- kannel accepted all the %s messages, we mark them as sent -- " % msgs.count()
-        else:
-            msgs.update(status='Q')
-            print "-- kannel didn't accept these %s messages, we leave them queued -- " % msgs.count()
+            
+#        else:
+#            msgs.update(status='Q')
+#            print "-- kannel didn't accept these %s messages, we leave them queued -- " % msgs.count()
 
 #        except Exception as e:
 #            print "-- there was Error, %s messages are left queued -- " % msgs.count()
