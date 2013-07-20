@@ -149,7 +149,11 @@ class HttpRouter(object):
                             logger.debug("Short-circuited")
                             # mark the message handled to avoid the 
                             # default phase firing unnecessarily
+                            # mark the stored message with the app which has handled the message
                             msg.handled = True
+                            db_message.application = "%s" % app.name
+                            db_message.save()
+                            logger.debug("Message marked as handled by - %s" % app)
                             break
                     
                     elif phase == "default":
